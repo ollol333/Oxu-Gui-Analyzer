@@ -1,0 +1,427 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local task = task
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "FixedAnalyzerGui_V4"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local boxA = Instance.new("TextBox")
+boxA.Size = UDim2.new(0.45, 0, 0.7, 0)
+boxA.Position = UDim2.new(0.03, 0, 0.25, 0)
+boxA.MultiLine = true
+boxA.ClearTextOnFocus = false
+boxA.TextXAlignment = Enum.TextXAlignment.Left
+boxA.TextYAlignment = Enum.TextYAlignment.Top
+boxA.TextColor3 = Color3.fromRGB(255, 255, 255)
+boxA.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+boxA.BackgroundTransparency = 0.2
+boxA.TextSize = 14
+boxA.Parent = gui
+
+local boxB = boxA:Clone()
+boxB.Position = UDim2.new(0.52, 0, 0.25, 0)
+boxB.TextColor3 = Color3.fromRGB(0, 255, 0)
+boxB.ClearTextOnFocus = false
+boxB.Parent = gui
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(0, 340, 0, 40)
+status.Position = UDim2.new(0.33, 0, 0.18, 0)
+status.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+status.BackgroundTransparency = 0.3
+status.TextScaled = true
+status.TextColor3 = Color3.fromRGB(255, 255, 255)
+status.Text = "Esperando..."
+status.Parent = gui
+
+local prevButton = Instance.new("TextButton")
+prevButton.Size = UDim2.new(0, 50, 0, 28)
+prevButton.Position = UDim2.new(0.74, 0, 0.18, 0)
+prevButton.Text = "◀"
+prevButton.TextScaled = true
+prevButton.Visible = false
+prevButton.Parent = gui
+
+local pageLabel = Instance.new("TextLabel")
+pageLabel.Size = UDim2.new(0, 160, 0, 28)
+pageLabel.Position = UDim2.new(0.795, 0, 0.18, 0)
+pageLabel.BackgroundTransparency = 1
+pageLabel.TextScaled = true
+pageLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
+pageLabel.Text = ""
+pageLabel.Parent = gui
+
+local nextButton = Instance.new("TextButton")
+nextButton.Size = UDim2.new(0, 50, 0, 28)
+nextButton.Position = UDim2.new(0.92, 0, 0.18, 0)
+nextButton.Text = "▶"
+nextButton.TextScaled = true
+nextButton.Visible = false
+nextButton.Parent = gui
+
+local showAllButton = Instance.new("TextButton")
+showAllButton.Size = UDim2.new(0, 120, 0, 28)
+showAllButton.Position = UDim2.new(0.52, 0, 0.12, 0)
+showAllButton.Text = "Mostrar Página"
+showAllButton.TextScaled = true
+showAllButton.Parent = gui
+
+local limitPerPage = 100000
+local analyzing = false
+local analyzed = {}
+local scriptLines = {}
+local errorsFound = false
+local analysisDone = false
+local pages = {}
+local currentPage = 1
+
+local function safeVar(name)
+	return "obj_" .. string.gsub(tostring(name), "[^%w_]", "_")
+end
+
+local function escapeStr(s)
+	if s == nil then return "" end
+	return tostring(s):gsub('"', '\\"')
+end
+
+local function sv(parentVar, name, value)
+	table.insert(scriptLines, string.format([[pcall(function()
+local sv = Instance.new("StringValue", %s)
+sv.Name = "%s"
+sv.Value = "%s"
+end)]], parentVar, escapeStr(name), escapeStr(tostring(value or ""))))
+end
+
+local function addCommonPartProps(safeName, obj)
+	table.insert(scriptLines, safeName .. ".Anchored = true")
+	table.insert(scriptLines, safeName .. ".Position = Vector3.new("..obj.Position.X..","..obj.Position.Y..","..obj.Position.Z..")")
+	table.insert(scriptLines, safeName .. ".Orientation = Vector3.new("..obj.Orientation.X..","..obj.Orientation.Y..","..obj.Orientation.Z..")")
+	table.insert(scriptLines, safeName .. ".Size = Vector3.new("..obj.Size.X..","..obj.Size.Y..","..obj.Size.Z..")")
+	table.insert(scriptLines, safeName .. ".Transparency = "..tostring(obj.Transparency))
+	table.insert(scriptLines, "pcall(function() "..safeName..".Material = Enum.Material."..tostring(obj.Material).." end)")
+	if obj.Color then
+		table.insert(scriptLines, safeName .. ".Color = Color3.fromRGB("..math.floor((obj.Color.R or obj.Color3.R)*255)..","..math.floor((obj.Color.G or obj.Color3.G)*255)..","..math.floor((obj.Color.B or obj.Color3.B)*255)..")")
+	end
+end
+
+local function copySurfaceAppearance(safeName, surf)
+	local surfVar = safeVar(surf.Name)
+	table.insert(scriptLines, "local " .. surfVar .. " = " .. safeName .. ":FindFirstChild('"..surf.Name.."') or Instance.new('SurfaceAppearance', " .. safeName .. ")")
+	table.insert(scriptLines, surfVar .. ".Name = '"..escapeStr(surf.Name).."'")
+
+	sv(surfVar, "SurfaceAppearance_Class", surf.ClassName)
+	sv(surfVar, "SurfaceAppearance_AlphaMode", tostring(surf.AlphaMode))
+
+	if surf.Color then
+		sv(surfVar, "SurfaceAppearance_Color", string.format("Color3.fromRGB(%d,%d,%d)", math.floor(surf.Color.R*255), math.floor(surf.Color.G*255), math.floor(surf.Color.B*255)))
+	end
+
+	sv(surfVar, "SurfaceAppearance_ColorMap", surf.ColorMap or "")
+	sv(surfVar, "SurfaceAppearance_MetalnessMap", surf.MetalnessMap or "")
+	sv(surfVar, "SurfaceAppearance_NormalMap", surf.NormalMap or "")
+	sv(surfVar, "SurfaceAppearance_RoughnessMap", surf.RoughnessMap or "")
+end
+
+local function copyDecal(decVarName, child)
+	sv(decVarName, "Decal_Class", child.ClassName)
+	sv(decVarName, "Decal_Texture", child.Texture or "")
+	sv(decVarName, "Decal_Transparency", child.Transparency)
+	if child.Color3 then
+		sv(decVarName, "Decal_Color3", string.format("Color3.fromRGB(%d,%d,%d)", math.floor(child.Color3.R*255), math.floor(child.Color3.G*255), math.floor(child.Color3.B*255)))
+	end
+end
+
+local function copyTexture(texVarName, child)
+	sv(texVarName, "Texture_Class", child.ClassName)
+	sv(texVarName, "Texture_Texture", child.Texture or "")
+	sv(texVarName, "Texture_StudsPerTileU", child.StudsPerTileU or 0)
+	sv(texVarName, "Texture_StudsPerTileV", child.StudsPerTileV or 0)
+	sv(texVarName, "Texture_OffsetStudsU", child.OffsetStudsU or 0)
+	sv(texVarName, "Texture_OffsetStudsV", child.OffsetStudsV or 0)
+end
+
+local function copyMeshProps(safeName, obj)
+	sv(safeName, "MeshId", obj.MeshId or "")
+	sv(safeName, "TextureID", obj.TextureID or "")
+end
+
+local function copyUnionProps(safeName, obj)
+	sv(safeName, "Union_Class", obj.ClassName)
+	sv(safeName, "Union_Transparency", obj.Transparency)
+	sv(safeName, "Union_Material", tostring(obj.Material))
+	if obj.Color then
+		sv(safeName, "Union_Color", string.format("Color3.fromRGB(%d,%d,%d)", math.floor(obj.Color.R*255), math.floor(obj.Color.G*255), math.floor(obj.Color.B*255)))
+	end
+end
+
+local function copyLightProps(safeName, light)
+	sv(safeName, light.Name .. "_Class", light.ClassName)
+	sv(safeName, light.Name .. "_Brightness", light.Brightness)
+	sv(safeName, light.Name .. "_Range", light.Range)
+	sv(safeName, light.Name .. "_Enabled", light.Enabled)
+	if light.Color then
+		sv(safeName, light.Name .. "_Color", string.format("Color3.fromRGB(%d,%d,%d)", math.floor(light.Color.R*255), math.floor(light.Color.G*255), math.floor(light.Color.B*255)))
+	end
+	if light:IsA("SpotLight") then
+		sv(safeName, light.Name .. "_Angle", light.Angle)
+	end
+end
+
+local function copyBeamProps(safeName, beam)
+	sv(safeName, beam.Name .. "_Class", beam.ClassName)
+	sv(safeName, beam.Name .. "_Texture", beam.Texture or "")
+	sv(safeName, beam.Name .. "_Width0", beam.Width0)
+	sv(safeName, beam.Name .. "_Width1", beam.Width1)
+	sv(safeName, beam.Name .. "_Enabled", beam.Enabled)
+end
+
+local function copyParticleProps(safeName, pe)
+	sv(safeName, pe.Name .. "_Class", pe.ClassName)
+	sv(safeName, pe.Name .. "_Texture", pe.Texture or "")
+	-- Lifetime and Speed can be range objects; stringify them
+	local lt = typeof(pe.Lifetime) == "NumberRange" and (tostring(pe.Lifetime.Min).."|"..tostring(pe.Lifetime.Max)) or tostring(pe.Lifetime)
+	local sp = typeof(pe.Speed) == "NumberRange" and (tostring(pe.Speed.Min).."|"..tostring(pe.Speed.Max)) or tostring(pe.Speed)
+	sv(safeName, pe.Name .. "_Rate", pe.Rate)
+	sv(safeName, pe.Name .. "_Lifetime", lt)
+	sv(safeName, pe.Name .. "_Speed", sp)
+	sv(safeName, pe.Name .. "_Enabled", pe.Enabled)
+end
+
+local function copySoundProps(safeName, snd)
+	sv(safeName, snd.Name .. "_Class", snd.ClassName)
+	sv(safeName, snd.Name .. "_SoundId", snd.SoundId or "")
+	sv(safeName, snd.Name .. "_Volume", snd.Volume)
+	sv(safeName, snd.Name .. "_PlaybackSpeed", snd.PlaybackSpeed or 1)
+	sv(safeName, snd.Name .. "_Looped", snd.Looped)
+end
+
+local function copyAttachmentProps(attVar, att)
+	sv(attVar, att.Name .. "_Class", att.ClassName)
+	sv(attVar, att.Name .. "_Position", string.format("Vector3.new(%f,%f,%f)", att.Position.X, att.Position.Y, att.Position.Z))
+	sv(attVar, att.Name .. "_Rotation", string.format("Vector3.new(%f,%f,%f)", att.Rotation.X, att.Rotation.Y, att.Rotation.Z))
+end
+
+local function analyzeObject(obj, parentVar, depth)
+	if obj:IsDescendantOf(player.Character) then return end
+	local prefix = string.rep("    ", depth)
+	local safeName = safeVar(obj.Name)
+	local objPath = parentVar .. ":FindFirstChild('" .. escapeStr(obj.Name) .. "') or Instance.new('" .. obj.ClassName .. "', " .. parentVar .. ")"
+	table.insert(analyzed, prefix .. "📦 " .. obj.Name .. " [" .. obj.ClassName .. "]")
+
+	local ok, err = pcall(function()
+		table.insert(scriptLines, "pcall(function()")
+		table.insert(scriptLines, "local " .. safeName .. " = " .. objPath)
+		table.insert(scriptLines, safeName .. ".Name = \"" .. escapeStr(obj.Name) .. "\"")
+
+		if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation") then
+			addCommonPartProps(safeName, obj)
+		end
+
+		local surf = obj:FindFirstChildOfClass("SurfaceAppearance")
+		if surf then
+			copySurfaceAppearance(safeName, surf) -- ahora lo pone dentro del SurfaceAppearance real
+		end
+
+		if obj:IsA("MeshPart") then
+			copyMeshProps(safeName, obj)
+		end
+
+		if obj:IsA("UnionOperation") then
+			copyUnionProps(safeName, obj)
+		end
+
+		if obj:IsA("SpotLight") or obj:IsA("PointLight") or obj:IsA("SurfaceLight") then
+			copyLightProps(safeName, obj)
+		end
+
+		if obj:IsA("Beam") then
+			copyBeamProps(safeName, obj)
+		end
+
+		if obj:IsA("ParticleEmitter") then
+			copyParticleProps(safeName, obj)
+		end
+
+		if obj:IsA("Sound") then
+			copySoundProps(safeName, obj)
+		end
+
+		for _, child in ipairs(obj:GetChildren()) do
+			if child:IsA("Decal") then
+				local decVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..decVar.." = Instance.new('Decal', "..safeName..")")
+				table.insert(scriptLines, decVar..".Name = \""..escapeStr(child.Name).."\"")
+				copyDecal(decVar, child)
+			elseif child:IsA("Texture") then
+				local texVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..texVar.." = Instance.new('Texture', "..safeName..")")
+				table.insert(scriptLines, texVar..".Name = \""..escapeStr(child.Name).."\"")
+				copyTexture(texVar, child)
+			elseif child:IsA("Attachment") then
+				local attVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..attVar.." = Instance.new('Attachment', "..safeName..")")
+				table.insert(scriptLines, attVar..".Name = \""..escapeStr(child.Name).."\"")
+				copyAttachmentProps(attVar, child)
+			elseif child:IsA("Beam") then
+				local beamVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..beamVar.." = Instance.new('Beam', "..safeName..")")
+				table.insert(scriptLines, beamVar..".Name = \""..escapeStr(child.Name).."\"")
+				copyBeamProps(safeName, child)
+			elseif child:IsA("ParticleEmitter") then
+				local peVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..peVar.." = Instance.new('ParticleEmitter', "..safeName..")")
+				table.insert(scriptLines, peVar..".Name = \""..escapeStr(child.Name).."\"")
+				copyParticleProps(safeName, child)
+			elseif child:IsA("Sound") then
+				local sVar = safeVar(child.Name)
+				table.insert(scriptLines, "local "..sVar.." = Instance.new('Sound', "..safeName..")")
+				table.insert(scriptLines, sVar..".Name = \""..escapeStr(child.Name).."\"")
+				copySoundProps(safeName, child)
+			else
+				analyzeObject(child, safeName, depth + 1)
+			end
+		end
+
+		table.insert(scriptLines, "end)")
+	end)
+
+	if not ok then
+		errorsFound = true
+		table.insert(analyzed, prefix.."❌ Error en "..tostring(obj.Name)..": "..tostring(err))
+	end
+end
+
+local function passExtraChecks(times)
+	for i = 1, times do
+		for _, obj in ipairs(Workspace:GetChildren()) do
+			pcall(function()
+				analyzeObject(obj, "workspace", 0)
+			end)
+			RunService.Heartbeat:Wait()
+		end
+		task.wait(0.05)
+	end
+end
+
+local function paginateText(full)
+	pages = {}
+	for i = 1, #full, limitPerPage do
+		table.insert(pages, full:sub(i, math.min(i + limitPerPage - 1, #full)))
+	end
+	currentPage = 1
+end
+
+local function updatePageDisplay()
+	if #pages == 0 then
+		boxB.Text = ""
+		pageLabel.Text = ""
+		prevButton.Visible = false
+		nextButton.Visible = false
+		return
+	end
+	boxB.Text = pages[currentPage]
+	pageLabel.Text = "Página " .. currentPage .. " / " .. #pages
+	prevButton.Visible = currentPage > 1
+	nextButton.Visible = currentPage < #pages
+end
+
+prevButton.MouseButton1Click:Connect(function()
+	if currentPage > 1 then
+		currentPage -= 1
+		updatePageDisplay()
+	end
+end)
+
+nextButton.MouseButton1Click:Connect(function()
+	if currentPage < #pages then
+		currentPage += 1
+		updatePageDisplay()
+	end
+end)
+
+showAllButton.MouseButton1Click:Connect(function()
+	updatePageDisplay()
+end)
+
+local function finalizeAnalysisAndGenerate()
+	passExtraChecks(3) -- tres repasadas
+	boxA.Text = table.concat(analyzed, "\n")
+	analysisDone = true
+	status.Text = errorsFound and "⚠️ Análisis completado (errores detectados)" or "✅ Análisis completado"
+	status.TextColor3 = errorsFound and Color3.fromRGB(255, 200, 0) or Color3.fromRGB(0, 255, 0)
+
+	-- countdown 3s azul
+	local cd = 3
+	status.TextColor3 = Color3.fromRGB(0, 170, 255)
+	while cd > 0 do
+		status.Text = "Generando en " .. cd .. "..."
+		task.wait(1)
+		cd = cd - 1
+	end
+
+	-- construir código completo
+	local header = "local Workspace = game:GetService('Workspace')\n\npcall(function()\n"
+	local body = table.concat(scriptLines, "\n")
+	local footer = "\nend)\nprint('✅ Mapa recreado (errores ignorados)')"
+	local full = "-- PÉGALO EN UN SCRIPT EN ServerScriptService PARA RECREAR TODO --\n\n" .. header .. body .. footer
+
+	-- paginar y mostrar
+	paginateText(full)
+	updatePageDisplay()
+	status.Text = "✅ Script generado (dividido en páginas)"
+	status.TextColor3 = Color3.fromRGB(0, 255, 0)
+end
+
+local function startAnalysis()
+	if analyzing then return end
+	analyzing = true
+	analyzed = {}
+	scriptLines = {}
+	errorsFound = false
+	analysisDone = false
+
+	boxA.Text = ""
+	boxB.Text = ""
+	status.Text = "Analizando Workspace..."
+	status.TextColor3 = Color3.fromRGB(255, 255, 0)
+
+	task.spawn(function()
+		for _, obj in ipairs(Workspace:GetChildren()) do
+			pcall(function()
+				analyzeObject(obj, "workspace", 0)
+			end)
+			RunService.Heartbeat:Wait()
+		end
+
+		-- ✅ Solo se vuelve a analizar si no existe en scriptLines (no duplica)
+		for i = 1, 2 do
+			for _, obj in ipairs(Workspace:GetChildren()) do
+				pcall(function()
+					if not analyzed[obj] then
+						analyzeObject(obj, "workspace", 0)
+					end
+				end)
+				RunService.Heartbeat:Wait()
+			end
+		end
+
+		finalizeAnalysisAndGenerate()
+		analyzing = false
+	end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.L then
+		if not analyzing and not analysisDone then
+			startAnalysis()
+		end
+	end
+end)
