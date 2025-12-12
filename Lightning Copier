@@ -1,0 +1,206 @@
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "FixedAnalyzerGui_Lighting"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local boxA = Instance.new("TextBox")
+boxA.Size = UDim2.new(0.45, 0, 0.7, 0)
+boxA.Position = UDim2.new(0.03, 0, 0.25, 0)
+boxA.MultiLine = true
+boxA.ClearTextOnFocus = false
+boxA.TextXAlignment = Enum.TextXAlignment.Left
+boxA.TextYAlignment = Enum.TextYAlignment.Top
+boxA.TextColor3 = Color3.fromRGB(255,255,255)
+boxA.BackgroundColor3 = Color3.fromRGB(0,0,0)
+boxA.BackgroundTransparency = 0.2
+boxA.TextSize = 14
+boxA.Parent = gui
+
+local boxB = boxA:Clone()
+boxB.Position = UDim2.new(0.52, 0, 0.25, 0)
+boxB.TextColor3 = Color3.fromRGB(0,255,0)
+boxB.Parent = gui
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(0,340,0,40)
+status.Position = UDim2.new(0.33,0,0.18,0)
+status.BackgroundColor3 = Color3.fromRGB(0,0,0)
+status.BackgroundTransparency = 0.3
+status.TextScaled = true
+status.TextColor3 = Color3.fromRGB(255,255,255)
+status.Text = "Esperando..."
+status.Parent = gui
+
+local prevButton = Instance.new("TextButton")
+prevButton.Size = UDim2.new(0,50,0,28)
+prevButton.Position = UDim2.new(0.74,0,0.18,0)
+prevButton.Text = "◀"
+prevButton.TextScaled = true
+prevButton.Visible = false
+prevButton.Parent = gui
+
+local pageLabel = Instance.new("TextLabel")
+pageLabel.Size = UDim2.new(0,160,0,28)
+pageLabel.Position = UDim2.new(0.795,0,0.18,0)
+pageLabel.BackgroundTransparency = 1
+pageLabel.TextScaled = true
+pageLabel.TextColor3 = Color3.fromRGB(0,170,255)
+pageLabel.Text = ""
+pageLabel.Parent = gui
+
+local nextButton = Instance.new("TextButton")
+nextButton.Size = UDim2.new(0,50,0,28)
+nextButton.Position = UDim2.new(0.92,0,0.18,0)
+nextButton.Text = "▶"
+nextButton.TextScaled = true
+nextButton.Visible = false
+nextButton.Parent = gui
+
+local showAllButton = Instance.new("TextButton")
+showAllButton.Size = UDim2.new(0,120,0,28)
+showAllButton.Position = UDim2.new(0.52,0,0.12,0)
+showAllButton.Text = "Mostrar Página"
+showAllButton.TextScaled = true
+showAllButton.Parent = gui
+
+local scriptLines = {}
+local analyzed = {}
+local pages = {}
+local currentPage = 1
+local limitPerPage = 100000
+local analyzing = false
+local analysisDone = false
+
+local function safeVar(name)
+	return "obj_" .. tostring(name):gsub("[^%w_]", "_")
+end
+
+local function escapeStr(s)
+	return tostring(s):gsub('"', '\\"')
+end
+
+local function saveStringValue(parentVar, propName, value)
+	table.insert(scriptLines, string.format([[pcall(function()
+local sv = Instance.new("StringValue", %s)
+sv.Name = "%s"
+sv.Value = "%s"
+end)]], parentVar, escapeStr(propName), escapeStr(value)))
+end
+
+local function serializeValue(v)
+	local t = typeof(v)
+	if t == "Color3" then
+		return string.format("Color3.fromRGB(%d,%d,%d)", v.R*255, v.G*255, v.B*255)
+	elseif t == "Vector3" then
+		return string.format("Vector3.new(%g,%g,%g)", v.X, v.Y, v.Z)
+	elseif t == "UDim2" then
+		return string.format("UDim2.new(%g,%g,%g,%g)", v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
+	elseif t == "NumberRange" then
+		return string.format("NumberRange.new(%g,%g)", v.Min, v.Max)
+	elseif t == "BrickColor" then
+		return "BrickColor.new(\""..v.Name.."\")"
+	elseif t == "EnumItem" or t == "number" or t == "boolean" then
+		return tostring(v)
+	else
+		return '"'..escapeStr(tostring(v))..'"'
+	end
+end
+
+local function analyzeLightingObject(obj, parentVar, depth)
+	local safeName = safeVar(obj.Name)
+	table.insert(analyzed, string.rep("    ", depth).."💡 "..obj.Name.." ["..obj.ClassName.."]")
+
+	table.insert(scriptLines, "pcall(function()")
+	table.insert(scriptLines, "local "..safeName.." = "..parentVar..":FindFirstChild(\""..escapeStr(obj.Name).."\") or Instance.new(\""..obj.ClassName.."\","..parentVar..")")
+	table.insert(scriptLines, safeName..".Name = \""..escapeStr(obj.Name).."\"")
+
+	for _, prop in ipairs({
+		"Brightness","ClockTime","Ambient","OutdoorAmbient","ColorShift_Top","ColorShift_Bottom","ExposureCompensation",
+		"FogColor","FogEnd","FogStart","GeographicLatitude","Density","Offset","Color","Size","Intensity","Threshold",
+		"Spread","Contrast","Saturation","TintColor","FarIntensity","NearIntensity","FocusDistance","InFocusRadius","Enabled"
+		}) do
+		local ok, val = pcall(function() return obj[prop] end)
+		if ok and val ~= nil then
+			local s = serializeValue(val)
+			table.insert(scriptLines, safeName.."."..prop.." = "..s)
+			saveStringValue(safeName, prop, tostring(val))
+		end
+	end
+
+	table.insert(scriptLines, "end)")
+
+	for _, child in ipairs(obj:GetChildren()) do
+		analyzeLightingObject(child, safeName, depth + 1)
+	end
+end
+
+local function paginate(full)
+	pages = {}
+	for i = 1, #full, limitPerPage do
+		table.insert(pages, full:sub(i, i + limitPerPage - 1))
+	end
+	currentPage = 1
+end
+
+local function updatePage()
+	if #pages == 0 then boxB.Text = "" pageLabel.Text = "" return end
+	boxB.Text = pages[currentPage]
+	pageLabel.Text = "Página "..currentPage.." / "..#pages
+	prevButton.Visible = currentPage > 1
+	nextButton.Visible = currentPage < #pages
+end
+
+prevButton.MouseButton1Click:Connect(function()
+	if currentPage > 1 then currentPage -= 1 updatePage() end
+end)
+
+nextButton.MouseButton1Click:Connect(function()
+	if currentPage < #pages then currentPage += 1 updatePage() end
+end)
+
+showAllButton.MouseButton1Click:Connect(updatePage)
+
+local function generateScript()
+	local header = "local Lighting = game:GetService('Lighting')\nlocal Workspace = game:GetService('Workspace')\npcall(function()\nlocal folder = Workspace:FindFirstChild('LighningSeccion') or Instance.new('Folder', Workspace)\nfolder.Name = 'LighningSeccion'\n"
+	local body = table.concat(scriptLines, "\n")
+	local footer = "\nend)\nprint('✅ LightingSeccion recreado en Workspace')"
+
+	local full = "-- PÉGALO EN ServerScriptService PARA RECREAR LIGHTING --\n\n"..header..body..footer
+	boxA.Text = table.concat(analyzed, "\n")
+	paginate(full)
+	updatePage()
+	status.Text = "✅ Script generado"
+	status.TextColor3 = Color3.fromRGB(0,255,0)
+	analysisDone = true
+end
+
+local function startAnalysis()
+	if analyzing or analysisDone then return end
+	analyzing = true
+	analyzed, scriptLines = {}, {}
+	status.Text = "Analizando Lighting..."
+	status.TextColor3 = Color3.fromRGB(255,255,0)
+
+	for _, obj in ipairs(Lighting:GetChildren()) do
+		analyzeLightingObject(obj, "folder", 0)
+		RunService.Heartbeat:Wait()
+	end
+
+	generateScript()
+	analyzing = false
+end
+
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.K then
+		if not analysisDone then startAnalysis() end
+	end
+end)
