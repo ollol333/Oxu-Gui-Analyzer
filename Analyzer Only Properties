@@ -1,0 +1,555 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local character = player.Character or player.CharacterAdded:Wait()
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "CopyObjectsGui"
+gui.Enabled = true
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Name = "ObjectsWorkspace"
+scroll.AnchorPoint = Vector2.new(0.5, 0.5)
+scroll.Position = UDim2.new(0.14, 0, 0.5, 0)
+scroll.Size = UDim2.new(0, 380, 0, 720)
+scroll.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+scroll.BorderSizePixel = 0
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.ScrollBarThickness = 6
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = gui
+
+local scrollStroke = Instance.new("UIStroke")
+scrollStroke.Color = Color3.fromRGB(255,255,255)
+scrollStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+scrollStroke.Parent = scroll
+
+local list = Instance.new("UIListLayout")
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.Padding = UDim.new(0, 6)
+list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+list.Parent = scroll
+
+local selected = {}
+local buttons = {}
+local nameCount = {}
+local known = {}
+
+local propiedadFrame = nil
+
+
+local function destroyPropiedades()
+	if propiedadFrame then
+		propiedadFrame:Destroy()
+		propiedadFrame = nil
+	end
+end
+
+local function createPropiedades()
+	destroyPropiedades()
+
+	local prop = Instance.new("ScrollingFrame")
+	prop.Name = "Propiedades"
+	prop.AnchorPoint = Vector2.new(0.5, 0.5)
+	prop.Position = UDim2.new(0.39, 0, 0.5, 0)
+	prop.Size = UDim2.new(0, 350, 0, 720)
+	prop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	prop.BorderSizePixel = 0
+	prop.CanvasSize = UDim2.new(0, 0, 0, 0)
+	prop.ScrollBarThickness = 6
+	prop.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	prop.Parent = gui
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255,255,255)
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = prop
+
+	local list2 = Instance.new("UIListLayout")
+	list2.SortOrder = Enum.SortOrder.LayoutOrder
+	list2.Padding = UDim.new(0, 6)
+	list2.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	list2.Parent = prop
+
+	propiedadFrame = prop
+end
+
+local function createPropertyEntry(parent, propName, value)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, -20, 0, 30)
+	frame.BackgroundColor3 = Color3.fromRGB(15,15,15)
+	frame.Parent = parent
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.4, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Text = propName
+	label.Parent = frame
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(0.6, 0, 1, 0)
+	box.Position = UDim2.new(0.4, 0, 0, 0)
+	box.BackgroundColor3 = Color3.fromRGB(20,20,20)
+	box.TextColor3 = Color3.fromRGB(255,255,255)
+	box.ClearTextOnFocus = false
+	box.Text = tostring(value)
+	box.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255,255,255)
+	stroke.Parent = box
+
+	local original = tostring(value)
+
+	box.Focused:Connect(function()
+		box.Text = original
+	end)
+
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		if box.Text ~= original then
+			box.Text = original
+		end
+	end)
+end
+
+local function showPropertiesFromObject(obj)
+	if not obj or not obj:IsA("Instance") then return end
+
+	destroyPropiedades()
+	createPropiedades()
+
+	local function safeToString(val)
+		local t = typeof(val)
+		if t == "Color3" then
+			return "Color3(" .. math.floor(val.R*255) .. "," .. math.floor(val.G*255) .. "," .. math.floor(val.B*255) .. ")"
+		elseif t == "Vector3" then
+			return "Vector3(" .. tostring(val.X) .. "," .. tostring(val.Y) .. "," .. tostring(val.Z) .. ")"
+		elseif t == "CFrame" then
+			-- concise cframe representation
+			local x,y,z, r00,r01,r02, r10,r11,r12, r20,r21,r22
+			x,y,z = val.X, val.Y, val.Z
+			local r = {val:GetComponents()}
+			return string.format("CFrame(%s, %s, %s)", tostring(x), tostring(y), tostring(z))
+		elseif t == "UDim2" then
+			return "UDim2(" .. tostring(val) .. ")"
+		elseif t == "EnumItem" then
+			return tostring(val.Name)
+		elseif t == "ColorSequence" then
+			-- summarize
+			local s = "ColorSequence("
+			for i, k in ipairs(val.Keypoints) do
+				s = s .. string.format("[%d]=(%s@%s) ", i, tostring(k.Value), tostring(k.Time))
+			end
+			return s .. ")"
+		elseif t == "NumberSequence" then
+			local s = "NumberSequence("
+			for i, k in ipairs(val.Keypoints) do
+				s = s .. string.format("[%d]=(%s@%s) ", i, tostring(k.Value), tostring(k.Time))
+			end
+			return s .. ")"
+		elseif t == "NumberRange" then
+			return "NumberRange(" .. tostring(val.Min) .. "," .. tostring(val.Max) .. ")"
+		elseif t == "PhysicalProperties" then
+			return string.format("PhysicalProperties(Density=%s,Friction=%s,Elasticity=%s,FR=%s,EL=%s)",
+				tostring(val.Density), tostring(val.Friction), tostring(val.Elasticity), tostring(val.FrictionWeight), tostring(val.ElasticityWeight))
+		else
+			return tostring(val)
+		end
+	end
+
+	local function safeAdd(name, val)
+		local ok, _ = pcall(function()
+			if typeof(val) == "Instance" then
+				createPropertyEntry(propiedadFrame, name, "<Instance> " .. val.ClassName .. " : " .. tostring(val.Name))
+			else
+				createPropertyEntry(propiedadFrame, name, safeToString(val))
+			end
+		end)
+	end
+
+	local attrs = obj:GetAttributes()
+	for k, v in pairs(attrs) do
+		pcall(function() safeAdd("Attribute:" .. tostring(k), v) end)
+	end
+
+	local function loadProps(list)
+		for _, prop in ipairs(list) do
+			local ok, val = pcall(function() return obj[prop] end)
+			if ok and val ~= nil and typeof(val) ~= "function" then
+				safeAdd(prop, val)
+			end
+		end
+	end
+
+	if obj:IsA("MeshPart") then
+		loadProps({"MeshId","TextureID","RenderFidelity","DoubleSided","CollisionFidelity","CastShadow","LocalTransparencyModifier"})
+	end
+
+	if obj:IsA("SurfaceAppearance") then
+		local props = {
+			"ColorMap",
+			"MetalnessMap",
+			"RoughnessMap",
+			"NormalMap",
+			"Metalness",
+			"Roughness",
+			"AlphaMode",
+		}
+
+		for _, p in ipairs(props) do
+			local ok, val = pcall(function()
+				return obj[p]
+			end)
+
+			if ok and val ~= nil then
+				createPropertyEntry(propiedadFrame, p, tostring(val))
+			else
+				createPropertyEntry(propiedadFrame, p, "")
+			end
+		end
+	end
+
+	if obj:IsA("Decal") then
+		loadProps({"Texture","Transparency","Color3","Face"})
+	end
+
+	if obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then
+		loadProps({"Brightness","Range","Color","Shadows","Enabled","Angle","Face"})
+	end
+
+	local bigPropList = {
+		-- Instance / Basic
+		"Name","Parent","ClassName","Archivable","Tags","Right","Left","Top","Bottom",
+		-- BasePart / Physical
+		"Position","Rotation","Orientation","CFrame","Size","Anchored","CanCollide","CanQuery","CanTouch","CollisionGroupId","Mass","CustomPhysicalProperties",
+		"Material","Transparency","Reflectance","Color","BrickColor","Shape","Orientation","CastShadow","LocalTransparencyModifier","Elasticity","Friction","FrictionWeight","ElasticityWeight",
+		"Velocity","RotVelocity","AssemblyLinearVelocity","AssemblyAngularVelocity","RootPriority","Density","SurfaceType",
+		"Locked","BreakJointsOnDestroy","Topology","IsGrounded","SleepThreshold","NetworkOwnershipRule",
+		-- Mesh / Special
+		"MeshId","TextureID","Offset","Scale","VertexColor","Tangents","Normals","Texture","UploadDate",
+		-- Humanoid / Characters
+		"Health","MaxHealth","WalkSpeed","JumpHeight","JumpPower","HipHeight","AutoRotate","AutoJumpEnabled","DisplayDistanceType","NameDisplayDistance","HealthDisplayDistance",
+		"Sit","PlatformStand","RigType","Animator","RootPart","Torso","Animator","MoveDirection","EstimatedInstanceCount",
+		-- Sound
+		"SoundId","PlayOnRemove","Looped","PlaybackSpeed","Volume","EmitterSize","MaxDistance","RollOffMode","PlaybackState","TimePosition",
+		-- GUI
+		"Visible","Position","AnchorPoint","SizeConstraint","Size","ZIndex","Active","Selectable","Modal","ResetOnSpawn","ClipsDescendants","BackgroundColor3","BackgroundTransparency",
+		"BorderColor3","BorderMode","BorderSizePixel","AutoLocalize","Text","TextColor3","TextScaled","TextSize","Font","TextTransparency","TextStrokeColor3","TextStrokeTransparency",
+		"TextWrapped","LineHeight","TextXAlignment","TextYAlignment","RichText","Image","ImageRectOffset","ImageRectSize","ImageTransparency","ImageColor3","ScaleType","SliceCenter",
+		"Rotation","LayoutOrder","Padding","Spacing","HorizontalAlignment","VerticalAlignment","FillDirection","SortOrder",
+		-- Camera / Viewport
+		"CameraType","FieldOfView","CameraSubject","CameraEnabled","Focus","CFrame","ViewportSize","CameraMode",
+		-- Lights
+		"Brightness","Range","Color","Shadows","Enabled","Angle","Falloff","Specular","Diffuse",
+		-- Constraints / Joints
+		"Enabled","ActuatorType","Attachment0","Attachment1","RestPosition","CurrentPosition","LimitsEnabled","LowerAngle","UpperAngle","MaxTorque","MotorMaxTorque",
+		"Torque","Force","Damping","Stiffness","Responsiveness","AngularSpeed","MotorSpeed","TargetAngle","Limits","CollisionEnabled",
+		-- Particle / Effects
+		"EmissionRate","Lifetime","LifetimeLower","LifetimeUpper","ParticleSize","Speed","SpeedMin","SpeedMax","SpreadAngle","Rotation","RotSpeed","RotSpeedMax",
+		"Shape","Enabled","LockedToPart","LightInfluence","ColorSequence","Transparency","Size","Drag","Acceleration","VelocityInheritance",
+		-- Proximity / Click
+		"ActionText","ObjectText","MaxActivationDistance","KeyboardKeyCode","RequiresLineOfSight","HoldDuration","Triggered","Enabled",
+		-- Pathfinding / AI
+		"AgentRadius","AgentHeight","AgentCanJump","AgentMaxSlope","AgentWalkableTypes","CellSize","CellHeight",
+		-- Mesh / Special second pass
+		"Texture","Offset","VertexColor","Vertices","Triangles","SizeScale","CollisionFidelity","RenderFidelity","DoubleSided",
+		-- SoundService / Audio
+		"PlaybackLoudness","ListenerPosition","DopplerScale","DistanceFactor","RolloffScale","SoundGroup","Priority",
+		-- Terrain / Voxel
+		"WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency","Porousness","Materials","CellSize","WaterColor",
+		-- Data / Tags / Creator
+		"Creator","Source","Value","EnabledForAllPlayers","Priority","MaxActivationDistance","TimeLength","Looped","PlaybackState",
+		-- Animations
+		"AnimationId","Weight","Priority","TimePosition","Length","DefaultPriority","Repeats","PlaybackSpeed",
+		-- ParticleEmitter / Trail / Beam
+		"Attachment0","Attachment1","FaceCamera","LockAxis","LightEmission","TextureMode","Width0","Width1","TextureLength",
+		-- GUI text specifics
+		"TextScaled","TextTruncate","MaxVisibleGraphemes","AutoLocalize","LocalizationTable",
+		-- Core script properties
+		"Disabled","Source","LinkedSource","Order","Bootstrap","LoadPriority",
+		-- Services-like properties (on objects that mimic them)
+		"Priority","ReplicationFocus","ReplicationDistance","MaxPlayers","TeamColor","AutoAssignable",
+		-- Physics constraints & motors
+		"Motor6D","Part0","Part1","C0","C1","DesiredAngle","CurrentAngle","MaxVelocity","MaxTorque","MotorEnabled",
+		-- Camera & sound mixing
+		"Roll","Zoom","MinZoom","MaxZoom","UseNewZoom","IgnoreGuiInset",
+		-- Misc commonly used props across classes
+		"Transparency","Enabled","Visible","Locked","ZIndexBehavior","ClipsDescendants","Touchable","Selectable","AutoButtonColor","Style",
+		-- UserInput / GUIs
+		"InputBegan","InputEnded","ModalEnabled","ContextActionServiceBindings",
+		-- Inventory/Tool props
+		"Grip","GripForward","GripPos","GripRight","GripUp","Equipped","Enabled",
+		-- Networking / replication
+		"ReplicationFocus","ReplicationDistance","NetworkOwner","StreamingEnabled","StreamingMinDistance","StreamingPriority",
+		-- Additional possible properties
+		"BrickColor","Topology","IsDescendantOf","RenderPriority","PriorityMode","CollisionGroup","CollisionGroupId","MaxForce","P","D",
+		"Velocity","Thrust","AngularVelocity","RotationalVelocity","AutoLocalize","LockedToCharacter","BreakJointsOnDelete","RestoreOnSpawn",
+		-- HumanoidRootPart / Motor specifics
+		"RootPriority","RootPart","AutoRotate","CameraOffset","CameraMaxDistance","CameraMinDistance",
+	}
+
+	for _, v in ipairs(bigPropList) do
+	end
+
+	loadProps(bigPropList)
+
+	local suffixes = {"Id","ID","Id64","Index","Count","Size","Color","Scale","Offset","Enabled","Priority","Range","Radius","Time","Length","Rate"}
+	local prefixes = {"Max","Min","Is","Can","Has","Should","Use","Auto","Allow","Enable","Disable"}
+	local nameGuesses = {}
+
+	for _, base in ipairs({"Texture","Mesh","Sound","Light","Attachment","Part","Surface","Face","Local","Global","Playback","Animation","Emitter","Trail","Beam","Constraint","Motor","Align","Spring","BallSocket","Hinge","Rod"}) do
+		for _, s in ipairs(suffixes) do
+			table.insert(nameGuesses, base .. s)
+			table.insert(nameGuesses, s .. base)
+		end
+		for _, p in ipairs(prefixes) do
+			for _, s in ipairs(suffixes) do
+				table.insert(nameGuesses, p .. base .. s)
+			end
+		end
+	end
+
+	local guessSet = {}
+	for _, g in ipairs(nameGuesses) do
+		guessSet[g] = true
+	end
+	local guesses = {}
+	for k in pairs(guessSet) do table.insert(guesses, k) end
+
+	loadProps(guesses)
+
+	for _, child in ipairs(obj:GetChildren()) do
+		local childInfo = "<Child> " .. child.ClassName .. " : " .. tostring(child.Name)
+		pcall(function() createPropertyEntry(propiedadFrame, childInfo, "") end)
+	end
+
+	local commonSignals = {"Touched","Changed","AncestryChanged","DescendantAdded","DescendantRemoving","ChildAdded","ChildRemoved","GetPropertyChangedSignal"}
+	for _, sig in ipairs(commonSignals) do
+		pcall(function() createPropertyEntry(propiedadFrame, "<Signal> " .. sig, "") end)
+	end
+end
+
+local function createHighlight(obj)
+	local h = Instance.new("Highlight")
+	h.FillColor = Color3.fromRGB(0, 255, 255)
+	h.OutlineColor = Color3.fromRGB(255, 255, 255)
+	h.FillTransparency = 0.5
+	h.OutlineTransparency = 0
+	h.Parent = obj
+end
+
+local function removeHighlight(obj)
+	local h = obj:FindFirstChildOfClass("Highlight")
+	if h then h:Destroy() end
+end
+
+local function updateButtonVisual(button, state)
+	button.BackgroundColor3 = state
+		and Color3.fromRGB(60, 60, 60)
+		or Color3.fromRGB(10, 10, 10)
+end
+
+local function formatName(obj)
+	if not nameCount[obj.Name] then
+		nameCount[obj.Name] = 1
+		return obj.Name
+	end
+	nameCount[obj.Name] += 1
+	return obj.Name .. "*" .. nameCount[obj.Name]
+end
+
+local subSelected = {}
+
+local function toggleSelection(obj)
+	local bt = buttons[obj]
+	if not bt then return end
+
+	if selected[obj] then
+		selected[obj] = nil
+		removeHighlight(obj)
+		updateButtonVisual(bt.Main, false)
+	else
+		selected[obj] = true
+		createHighlight(obj)
+		updateButtonVisual(bt.Main, true)
+	end
+end
+
+local function toggleSubSelection(obj, bt)
+	if subSelected[obj] then
+		subSelected[obj] = nil
+		bt.BackgroundColor3 = Color3.fromRGB(20,20,20)
+	else
+		subSelected[obj] = true
+		bt.BackgroundColor3 = Color3.fromRGB(60,60,60)
+	end
+end
+
+local function createSubButton(parentFrame, subObj)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -20, 0, 28)
+	container.BackgroundTransparency = 1
+	container.Parent = parentFrame
+
+	local bt = Instance.new("TextButton")
+	bt.Size = UDim2.new(0.75, 0, 1, 0)
+	bt.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	bt.TextColor3 = Color3.fromRGB(255, 255, 255)
+	bt.Text = subObj.Name
+	bt.Parent = container
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255,255,255)
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = bt
+
+	local propBtn = Instance.new("TextButton")
+	propBtn.Size = UDim2.new(0.25, 0, 1, 0)
+	propBtn.Position = UDim2.new(0.75, 0, 0, 0)
+	propBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	propBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	propBtn.Text = "P"
+	propBtn.Parent = container
+
+	local prStroke = Instance.new("UIStroke")
+	prStroke.Color = Color3.fromRGB(255,255,255)
+	prStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	prStroke.Parent = propBtn
+
+	bt.MouseButton1Click:Connect(function()
+		toggleSubSelection(subObj, bt)
+	end)
+
+	propBtn.MouseButton1Click:Connect(function()
+		showPropertiesFromObject(subObj)
+	end)
+end
+
+local function createButton(obj)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -10, 0, 40)
+	container.BackgroundTransparency = 1
+	container.Parent = scroll
+
+	local mainBt = Instance.new("TextButton")
+	mainBt.Name = "Main"
+	mainBt.Size = UDim2.new(0.7, -5, 1, 0)
+	mainBt.Position = UDim2.new(0, 0, 0, 0)
+	mainBt.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+	mainBt.TextColor3 = Color3.fromRGB(255, 255, 255)
+	mainBt.Text = formatName(obj)
+	mainBt.Parent = container
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(255,255,255)
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = mainBt
+
+	local expandBt = Instance.new("TextButton")
+	expandBt.Size = UDim2.new(0.15, 0, 1, 0)
+	expandBt.Position = UDim2.new(0.7, 0, 0, 0)
+	expandBt.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	expandBt.TextColor3 = Color3.fromRGB(255,255,255)
+	expandBt.Text = "▶"
+	expandBt.Parent = container
+
+	local expandStroke = Instance.new("UIStroke")
+	expandStroke.Color = Color3.fromRGB(255,255,255)
+	expandStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	expandStroke.Parent = expandBt
+
+	local propBtn = Instance.new("TextButton")
+	propBtn.Size = UDim2.new(0.15, 0, 1, 0)
+	propBtn.Position = UDim2.new(0.85, 0, 0, 0)
+	propBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	propBtn.TextColor3 = Color3.fromRGB(255,255,255)
+	propBtn.Text = "P"
+	propBtn.Parent = container
+
+	local propStroke = Instance.new("UIStroke")
+	propStroke.Color = Color3.fromRGB(255,255,255)
+	propStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	propStroke.Parent = propBtn
+
+	local subFrame = Instance.new("Frame")
+	subFrame.Size = UDim2.new(1, -10, 0, 0)
+	subFrame.BackgroundTransparency = 1
+	subFrame.Visible = false
+	subFrame.Parent = scroll
+
+	local subList = Instance.new("UIListLayout")
+	subList.SortOrder = Enum.SortOrder.LayoutOrder
+	subList.Padding = UDim.new(0, 4)
+	subList.Parent = subFrame
+
+	for _, child in ipairs(obj:GetChildren()) do
+		if child:IsA("SurfaceAppearance") then
+			createSubButton(subFrame, child)
+		end
+	end
+
+	expandBt.MouseButton1Click:Connect(function()
+		subFrame.Visible = not subFrame.Visible
+		expandBt.Text = subFrame.Visible and "▼" or "▶"
+
+		local count = #subFrame:GetChildren() - 1
+		subFrame.Size = subFrame.Visible and UDim2.new(1, -10, 0, 30 * count + 10) or UDim2.new(1, -10, 0, 0)
+	end)
+
+	mainBt.MouseButton1Click:Connect(function()
+		toggleSelection(obj)
+	end)
+
+	propBtn.MouseButton1Click:Connect(function()
+		showPropertiesFromObject(obj)
+	end)
+
+	buttons[obj] = {Main = mainBt, Expand = expandBt, SubFrame = subFrame}
+end
+
+local function isValidObject(obj)
+	if obj:IsDescendantOf(character) then
+		return false
+	end
+	return obj:IsA("Part") or obj:IsA("MeshPart") or obj:IsA("UnionOperation")
+end
+
+RunService.Heartbeat:Connect(function()
+	for _, obj in pairs(Workspace:GetDescendants()) do
+		if isValidObject(obj) and not known[obj] then
+			known[obj] = true
+			createButton(obj)
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		local mouse = player:GetMouse()
+		local origin = Workspace.CurrentCamera.CFrame.Position
+		local dir = (mouse.Hit.Position - origin).Unit * 9999
+
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Blacklist
+		params.FilterDescendantsInstances = { character }
+
+		local result = Workspace:Raycast(origin, dir, params)
+		if not result then return end
+
+		local obj = result.Instance
+		if not obj then return end
+
+		if isValidObject(obj) then
+			toggleSelection(obj)
+		end
+	end
+end)
