@@ -193,7 +193,30 @@ local function showPropertiesFromObject(obj)
 	if obj:IsA("MeshPart") then
 		loadProps({"MeshId","TextureID","RenderFidelity","DoubleSided","CollisionFidelity","CastShadow","LocalTransparencyModifier"})
 	end
-
+	
+	if obj:IsA("ParticleEmitter") then
+		loadProps({
+			"Enabled","Rate","Lifetime","LifetimeLower","LifetimeUpper",
+			"Speed","SpeedMin","SpeedMax","SpreadAngle",
+			"Rotation","RotSpeed","RotSpeedMax",
+			"Size","Transparency","Color",
+			"LightEmission","LightInfluence",
+			"Acceleration","Drag","VelocityInheritance",
+			"Texture","ZOffset","Orientation","EmissionDirection",
+			"LockedToPart","Shape","ShapeInOut","ShapeStyle"
+		})
+	end
+	
+	if obj:IsA("Sound") then
+		loadProps({
+			"SoundId","Name","Volume","PlaybackSpeed","Pitch",
+			"Looped","Playing","TimePosition","TimeLength",
+			"RollOffMode","RollOffMaxDistance","RollOffMinDistance",
+			"EmitterSize","MaxDistance","PlaybackState",
+			"SoundGroup","Priority","PlayOnRemove"
+		})
+	end
+	
 	if obj:IsA("SurfaceAppearance") then
 		local props = {
 			"ColorMap",
@@ -339,19 +362,22 @@ local function showPropertiesFromObject(obj)
 end
 
 local function createHighlight(obj)
-	local h = Instance.new("Highlight")
-	h.FillColor = Color3.fromRGB(0, 255, 255)
-	h.OutlineColor = Color3.fromRGB(255, 255, 255)
-	h.FillTransparency = 0.5
-	h.OutlineTransparency = 0
-	h.Parent = obj
+	if obj:IsA("BasePart") then
+		local h = Instance.new("Highlight")
+		h.FillColor = Color3.fromRGB(0, 255, 255)
+		h.OutlineColor = Color3.fromRGB(255, 255, 255)
+		h.FillTransparency = 0.5
+		h.OutlineTransparency = 0
+		h.Parent = obj
+	end
 end
 
 local function removeHighlight(obj)
-	local h = obj:FindFirstChildOfClass("Highlight")
-	if h then h:Destroy() end
+	if obj:IsA("BasePart") then
+		local h = obj:FindFirstChildOfClass("Highlight")
+		if h then h:Destroy() end
+	end
 end
-
 local function updateButtonVisual(button, state)
 	button.BackgroundColor3 = state
 		and Color3.fromRGB(60, 60, 60)
@@ -492,7 +518,9 @@ local function createButton(obj)
 	subList.Parent = subFrame
 
 	for _, child in ipairs(obj:GetChildren()) do
-		if child:IsA("SurfaceAppearance") then
+		if child:IsA("SurfaceAppearance")
+			or child:IsA("ParticleEmitter")
+			or child:IsA("Sound") then
 			createSubButton(subFrame, child)
 		end
 	end
@@ -520,15 +548,41 @@ local function isValidObject(obj)
 	if obj:IsDescendantOf(character) then
 		return false
 	end
-	return obj:IsA("Part") or obj:IsA("MeshPart") or obj:IsA("UnionOperation")
+
+	return obj:IsA("Part")
+		or obj:IsA("MeshPart")
+		or obj:IsA("UnionOperation")
+		or obj:IsA("Sound")
+		or obj:IsA("ParticleEmitter")
 end
 
-RunService.Heartbeat:Connect(function()
-	for _, obj in pairs(Workspace:GetDescendants()) do
-		if isValidObject(obj) and not known[obj] then
-			known[obj] = true
-			createButton(obj)
-		end
+for _, obj in ipairs(Workspace:GetDescendants()) do
+	if isValidObject(obj) then
+		known[obj] = true
+		createButton(obj)
+	end
+end
+
+Workspace.DescendantAdded:Connect(function(obj)
+	if isValidObject(obj) and not known[obj] then
+		known[obj] = true
+		createButton(obj)
+	end
+end)
+
+local function removeObject(obj)
+	if buttons[obj] then
+		buttons[obj].Main.Parent:Destroy()
+		buttons[obj] = nil
+	end
+	known[obj] = nil
+	selected[obj] = nil
+	subSelected[obj] = nil
+end
+
+Workspace.DescendantRemoving:Connect(function(obj)
+	if known[obj] then
+		removeObject(obj)
 	end
 end)
 
